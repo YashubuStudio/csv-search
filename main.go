@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"yashubustudio/csv-search/emb"
@@ -15,6 +17,7 @@ import (
 	"yashubustudio/csv-search/internal/database"
 	"yashubustudio/csv-search/internal/ingest"
 	"yashubustudio/csv-search/internal/search"
+	"yashubustudio/csv-search/internal/server"
 )
 
 func main() {
@@ -34,6 +37,8 @@ func main() {
 		err = runIngest(ctx, args)
 	case "search":
 		err = runSearch(ctx, args)
+	case "serve":
+		err = runServe(ctx, args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -229,6 +234,122 @@ func runIngest(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runServe(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	dbPath := fs.String("db", "", "path to SQLite database")
+	addr := fs.String("addr", ":8080", "address for the HTTP server (host:port)")
+	tableName := fs.String("table", "", "default dataset to search")
+	topK := fs.Int("topk", -1, "default number of results to return")
+	ortLib := fs.String("ort-lib", "", "path to ONNX Runtime shared library")
+	modelPath := fs.String("model", "", "path to encoder ONNX model")
+	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
+	maxSeqLen := fs.Int("max-seq-len", -1, "maximum sequence length for the encoder")
+	requestTimeout := fs.Duration("request-timeout", 30*time.Second, "maximum duration for each search request")
+	shutdownTimeout := fs.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	appCfg, err := loadConfig(*configFlag, flagWasProvided(fs, "config"))
+	if err != nil {
+		return err
+	}
+
+	datasetName := strings.TrimSpace(*tableName)
+	if datasetName == "" && appCfg != nil && appCfg.DefaultDataset != "" {
+		datasetName = appCfg.DefaultDataset
+	}
+
+	var dataset config.DatasetConfig
+	if appCfg != nil && datasetName != "" {
+		if ds, ok := appCfg.Dataset(datasetName); ok {
+			dataset = ds
+		}
+	}
+
+	table := firstNonEmpty(*tableName, dataset.Table, datasetName, "default")
+
+	db := firstNonEmpty(*dbPath, configDatabasePath(appCfg), "data/app.db")
+	if db == "" {
+		return fmt.Errorf("db path is required")
+	}
+
+	ortDLL := *ortLib
+	if ortDLL == "" && appCfg != nil {
+		ortDLL = appCfg.ResolvePath(appCfg.Embedding.OrtLib)
+	}
+	if ortDLL == "" {
+		return fmt.Errorf("ort-lib is required")
+	}
+
+	model := *modelPath
+	if model == "" && appCfg != nil {
+		model = appCfg.ResolvePath(appCfg.Embedding.Model)
+	}
+	if model == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	tokenizer := *tokenizerPath
+	if tokenizer == "" && appCfg != nil {
+		tokenizer = appCfg.ResolvePath(appCfg.Embedding.Tokenizer)
+	}
+	if tokenizer == "" {
+		return fmt.Errorf("tokenizer is required")
+	}
+
+	seqLen := firstPositive(*maxSeqLen, cfgEmbeddingMaxSeqLen(appCfg), 512)
+	defaultTopK := firstPositive(*topK, cfgSearchTopK(appCfg), 10)
+	if defaultTopK <= 0 {
+		defaultTopK = 10
+	}
+
+	dbHandle, err := database.Open(db)
+	if err != nil {
+		return err
+	}
+	defer dbHandle.Close()
+
+	initCtx, cancelInit := context.WithTimeout(ctx, 10*time.Second)
+	if err := database.Init(initCtx, dbHandle); err != nil {
+		cancelInit()
+		return err
+	}
+	cancelInit()
+
+	enc := &emb.Encoder{}
+	encoderCfg := emb.Config{
+		OrtDLL:        ortDLL,
+		ModelPath:     model,
+		TokenizerPath: tokenizer,
+		MaxSeqLen:     seqLen,
+	}
+	if err := enc.Init(encoderCfg); err != nil {
+		return err
+	}
+	defer enc.Close()
+
+	srvCfg := server.Config{
+		Addr:            *addr,
+		Dataset:         table,
+		DefaultTopK:     defaultTopK,
+		RequestTimeout:  *requestTimeout,
+		ShutdownTimeout: *shutdownTimeout,
+	}
+
+	srv, err := server.New(dbHandle, enc, srvCfg)
+	if err != nil {
+		return err
+	}
+
+	serveCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return srv.Serve(serveCtx)
+}
+
 func runSearch(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
@@ -352,6 +473,7 @@ Commands:
   init      Initialize the SQLite database schema
   ingest    Ingest CSV data and generate embeddings
   search    Perform a semantic vector search
+  serve     Start the long-running HTTP search server
 
 Use "%s <command> -h" to see command-specific options.
 `, exe, exe)
