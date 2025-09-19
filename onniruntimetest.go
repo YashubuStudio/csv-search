@@ -1,40 +1,45 @@
 package main
 
+/*
+// legacy main for manual encoder testing. Retained but disabled so the primary
+// application can define its own main in main.go.
 import (
-	"fmt"
-	"log"
-	"yashubustudio/csv-search/emb"
+        "fmt"
+        "log"
+
+        "yashubustudio/csv-search/emb"
 )
 
 func main() {
-	enc := &emb.Encoder{}
-	cfg := emb.Config{
-		OrtDLL:        `D:\Ollama\projects\csv-search\onnixruntime-win\lib\onnxruntime.dll`,
-		ModelPath:     `D:\Ollama\projects\csv-search\models\bge-m3\model.onnx`,
-		TokenizerPath: `D:\Ollama\projects\csv-search\models\bge-m3\tokenizer.json`,
-		MaxSeqLen:     512,
-	}
-	if err := enc.Init(cfg); err != nil {
-		log.Fatal(err)
-	}
-	defer enc.Close()
+        enc := &emb.Encoder{}
+        cfg := emb.Config{
+                OrtDLL:        `D:\\Ollama\\projects\\csv-search\\onnixruntime-win\\lib\\onnxruntime.dll`,
+                ModelPath:     `D:\\Ollama\\projects\\csv-search\\models\\bge-m3\\model.onnx`,
+                TokenizerPath: `D:\\Ollama\\projects\\csv-search\\models\\bge-m3\\tokenizer.json`,
+                MaxSeqLen:     512,
+        }
+        if err := enc.Init(cfg); err != nil {
+                log.Fatal(err)
+        }
+        defer enc.Close()
 
-	// 動作確認：2文の類似度
-	a := "渋谷で静かなWi-Fiカフェを探しています。"
-	b := "ノートPC作業に向いた落ち着いた喫茶店を知りたい。"
+        // 動作確認：2文の類似度
+        a := "渋谷で静かなWi-Fiカフェを探しています。"
+        b := "ノートPC作業に向いた落ち着いた喫茶店を知りたい。"
 
-	va, err := enc.Encode(a)
-	if err != nil {
-		log.Fatal(err)
-	}
-	vb, err := enc.Encode(b)
-	if err != nil {
-		log.Fatal(err)
-	}
+        va, err := enc.Encode(a)
+        if err != nil {
+                log.Fatal(err)
+        }
+        vb, err := enc.Encode(b)
+        if err != nil {
+                log.Fatal(err)
+        }
 
-	fmt.Printf("dim=%d\n", len(va))
-	fmt.Printf("cosine(a,b)=%.3f\n", cosine(va, vb))
+        fmt.Printf("dim=%d\n", len(va))
+        fmt.Printf("cosine(a,b)=%.3f\n", cosine(va, vb))
 }
+*/
 
 func cosine(a, b []float32) float64 {
 	var dot, na, nb float64
