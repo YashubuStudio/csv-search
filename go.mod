@@ -3,8 +3,9 @@ module yashubustudio/csv-search
 go 1.24.5
 
 require (
-	github.com/sugarme/tokenizer v0.3.0
-	github.com/yalue/onnxruntime_go v1.21.0
+        github.com/sugarme/tokenizer v0.3.0
+        github.com/yalue/onnxruntime_go v1.21.0
+        modernc.org/sqlite v1.27.0
 )
 
 require (
