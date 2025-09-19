@@ -8,41 +8,35 @@ import (
 
 var schema = []string{
 	"PRAGMA journal_mode=WAL;",
-	`CREATE TABLE IF NOT EXISTS items (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                body TEXT,
-                tags TEXT,
-                category TEXT,
-                price REAL,
-                stock INTEGER,
-                created_at INTEGER,
-                updated_at INTEGER,
+	`CREATE TABLE IF NOT EXISTS records (
+                dataset TEXT NOT NULL,
+                id TEXT NOT NULL,
+                data TEXT NOT NULL,
                 lat REAL,
                 lng REAL,
-                hash TEXT
+                hash TEXT,
+                PRIMARY KEY(dataset, id)
         );`,
-	`CREATE TABLE IF NOT EXISTS items_vec (
-                id TEXT PRIMARY KEY,
-                embedding BLOB NOT NULL
+	`CREATE TABLE IF NOT EXISTS records_vec (
+                dataset TEXT NOT NULL,
+                id TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                PRIMARY KEY(dataset, id),
+                FOREIGN KEY(dataset, id) REFERENCES records(dataset, id) ON DELETE CASCADE
         );`,
-	`CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+	`CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+                dataset UNINDEXED,
                 id UNINDEXED,
-                title,
-                body,
-                tags
+                content
         );`,
-	`CREATE VIRTUAL TABLE IF NOT EXISTS items_rtree USING rtree(
-                item_rowid,
+	`CREATE VIRTUAL TABLE IF NOT EXISTS records_rtree USING rtree(
+                rowid,
                 min_lat,
                 max_lat,
                 min_lng,
                 max_lng
         );`,
-	`CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);`,
-	`CREATE INDEX IF NOT EXISTS idx_items_price ON items(price);`,
-	`CREATE INDEX IF NOT EXISTS idx_items_stock ON items(stock);`,
-	`CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at);`,
+	`CREATE INDEX IF NOT EXISTS idx_records_dataset ON records(dataset);`,
 }
 
 func applySchema(ctx context.Context, db *sql.DB, statements []string) error {

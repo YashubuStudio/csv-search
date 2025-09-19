@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"yashubustudio/csv-search/emb"
@@ -79,17 +80,12 @@ func runIngest(ctx context.Context, args []string) error {
 	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
 	maxSeqLen := fs.Int("max-seq-len", 512, "maximum sequence length for the encoder")
 
+	tableName := fs.String("table", "default", "logical table/dataset name to store the records")
 	idCol := fs.String("id-col", "id", "CSV column containing the primary identifier")
-	titleCol := fs.String("title-col", "title", "CSV column for the title (empty to disable)")
-	bodyCol := fs.String("body-col", "body", "CSV column for the body (empty to disable)")
-	tagsCol := fs.String("tags-col", "tags", "CSV column for tags (empty to disable)")
-	categoryCol := fs.String("category-col", "category", "CSV column for category (empty to disable)")
-	priceCol := fs.String("price-col", "price", "CSV column for price (empty to disable)")
-	stockCol := fs.String("stock-col", "stock", "CSV column for stock (empty to disable)")
-	createdCol := fs.String("created-at-col", "created_at", "CSV column for created_at (empty to disable)")
-	updatedCol := fs.String("updated-at-col", "updated_at", "CSV column for updated_at (empty to disable)")
-	latCol := fs.String("lat-col", "lat", "CSV column for latitude (empty to disable)")
-	lngCol := fs.String("lng-col", "lng", "CSV column for longitude (empty to disable)")
+	textColsFlag := fs.String("text-cols", "", "comma-separated CSV columns used for embeddings (defaults to metadata columns)")
+	metaColsFlag := fs.String("meta-cols", "*", "comma-separated CSV columns to persist as metadata; use '*' to keep all")
+	latCol := fs.String("lat-col", "", "CSV column for latitude (empty to disable)")
+	lngCol := fs.String("lng-col", "", "CSV column for longitude (empty to disable)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -132,18 +128,13 @@ func runIngest(ctx context.Context, args []string) error {
 	options := ingest.Options{
 		CSVPath:   *csvPath,
 		BatchSize: *batchSize,
-		Columns: ingest.ColumnMapping{
-			ID:        *idCol,
-			Title:     *titleCol,
-			Body:      *bodyCol,
-			Tags:      *tagsCol,
-			Category:  *categoryCol,
-			Price:     *priceCol,
-			Stock:     *stockCol,
-			CreatedAt: *createdCol,
-			UpdatedAt: *updatedCol,
-			Lat:       *latCol,
-			Lng:       *lngCol,
+		Dataset:   *tableName,
+		Columns: ingest.ColumnConfig{
+			ID:       *idCol,
+			Text:     parseCSVList(*textColsFlag),
+			Metadata: parseCSVList(*metaColsFlag),
+			Lat:      *latCol,
+			Lng:      *lngCol,
 		},
 	}
 
@@ -163,6 +154,7 @@ func runSearch(ctx context.Context, args []string) error {
 	modelPath := fs.String("model", "", "path to encoder ONNX model")
 	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
 	maxSeqLen := fs.Int("max-seq-len", 512, "maximum sequence length for the encoder")
+	tableName := fs.String("table", "default", "logical table/dataset to search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -201,13 +193,27 @@ func runSearch(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	results, err := search.VectorSearch(ctx, db, enc, *query, *topK)
+	results, err := search.VectorSearch(ctx, db, enc, *tableName, *query, *topK)
 	if err != nil {
 		return err
 	}
 	encJSON := json.NewEncoder(os.Stdout)
 	encJSON.SetIndent("", "  ")
 	return encJSON.Encode(results)
+}
+
+func parseCSVList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var result []string
+	for _, part := range strings.Split(value, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func usage() {

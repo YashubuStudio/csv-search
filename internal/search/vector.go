@@ -3,8 +3,10 @@ package search
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"yashubustudio/csv-search/emb"
 	"yashubustudio/csv-search/internal/vector"
@@ -12,24 +14,19 @@ import (
 
 // Result represents a row returned from a vector similarity search.
 type Result struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	Tags      string   `json:"tags"`
-	Category  string   `json:"category"`
-	Price     *float64 `json:"price,omitempty"`
-	Stock     *int64   `json:"stock,omitempty"`
-	CreatedAt *int64   `json:"created_at,omitempty"`
-	UpdatedAt *int64   `json:"updated_at,omitempty"`
-	Lat       *float64 `json:"lat,omitempty"`
-	Lng       *float64 `json:"lng,omitempty"`
-	Score     float64  `json:"score"`
+	Dataset string            `json:"dataset"`
+	ID      string            `json:"id"`
+	Fields  map[string]string `json:"fields,omitempty"`
+	Score   float64           `json:"score"`
+	Lat     *float64          `json:"lat,omitempty"`
+	Lng     *float64          `json:"lng,omitempty"`
 }
 
-// VectorSearch encodes the query with enc and ranks items stored in the
-// database by cosine similarity. The topK parameter controls how many results
-// are returned (defaults to 10 when non-positive).
-func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, query string, topK int) ([]Result, error) {
+// VectorSearch encodes the query with enc and ranks records stored in the
+// database by cosine similarity. The dataset parameter selects which logical
+// table to search. The topK parameter controls how many results are returned
+// (defaults to 10 when non-positive).
+func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, dataset, query string, topK int) ([]Result, error) {
 	if enc == nil {
 		return nil, fmt.Errorf("encoder is nil")
 	}
@@ -43,17 +40,23 @@ func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, query strin
 		topK = 10
 	}
 
+	dataset = strings.TrimSpace(dataset)
+	if dataset == "" {
+		dataset = "default"
+	}
+
 	qvec, err := enc.Encode(query)
 	if err != nil {
 		return nil, err
 	}
 
 	rows, err := db.QueryContext(ctx, `
-                SELECT id, title, body, tags, category,
-                       price, stock, created_at, updated_at, lat, lng, embedding
-                FROM items
-                INNER JOIN items_vec USING(id);
-        `)
+                SELECT r.id, r.data, r.lat, r.lng, v.embedding
+                FROM records AS r
+                INNER JOIN records_vec AS v
+                        ON r.dataset = v.dataset AND r.id = v.id
+                WHERE r.dataset = ?;
+        `, dataset)
 	if err != nil {
 		return nil, err
 	}
@@ -62,45 +65,27 @@ func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, query strin
 	var results []Result
 	for rows.Next() {
 		var (
-			r       Result
-			price   sql.NullFloat64
-			stock   sql.NullInt64
-			created sql.NullInt64
-			updated sql.NullInt64
-			lat     sql.NullFloat64
-			lng     sql.NullFloat64
-			blob    []byte
+			r    Result
+			data string
+			lat  sql.NullFloat64
+			lng  sql.NullFloat64
+			blob []byte
 		)
-		if err := rows.Scan(
-			&r.ID, &r.Title, &r.Body, &r.Tags, &r.Category,
-			&price, &stock, &created, &updated, &lat, &lng, &blob,
-		); err != nil {
+		if err := rows.Scan(&r.ID, &data, &lat, &lng, &blob); err != nil {
 			return nil, err
+		}
+
+		if err := json.Unmarshal([]byte(data), &r.Fields); err != nil {
+			return nil, fmt.Errorf("decode metadata for %s: %w", r.ID, err)
 		}
 
 		vec, err := vector.Deserialize(blob)
 		if err != nil {
 			return nil, err
 		}
-		score := vector.Cosine(qvec, vec)
-		r.Score = score
+		r.Score = vector.Cosine(qvec, vec)
+		r.Dataset = dataset
 
-		if price.Valid {
-			v := price.Float64
-			r.Price = &v
-		}
-		if stock.Valid {
-			v := stock.Int64
-			r.Stock = &v
-		}
-		if created.Valid {
-			v := created.Int64
-			r.CreatedAt = &v
-		}
-		if updated.Valid {
-			v := updated.Int64
-			r.UpdatedAt = &v
-		}
 		if lat.Valid {
 			v := lat.Float64
 			r.Lat = &v
