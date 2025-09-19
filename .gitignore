@@ -34,4 +34,8 @@ Thumbs.db
 *.pdb
 
 #ai model
+/models/**
 *.onnx
+*.onnx_data
+*.bin
+*.safetensors
