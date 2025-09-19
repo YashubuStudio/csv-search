@@ -240,6 +240,8 @@ func runSearch(ctx context.Context, args []string) error {
 	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
 	maxSeqLen := fs.Int("max-seq-len", -1, "maximum sequence length for the encoder")
 	tableName := fs.String("table", "", "logical table/dataset to search")
+	var filterArgs filterFlag
+	fs.Var(&filterArgs, "filter", "metadata filter in the form field=value (repeatable)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -319,7 +321,7 @@ func runSearch(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	results, err := search.VectorSearch(ctx, dbHandle, enc, table, *query, limit)
+	results, err := search.VectorSearch(ctx, dbHandle, enc, table, *query, limit, []search.Filter(filterArgs))
 	if err != nil {
 		return err
 	}
@@ -426,4 +428,34 @@ func cloneStrings(src []string) []string {
 	out := make([]string, len(src))
 	copy(out, src)
 	return out
+}
+
+type filterFlag []search.Filter
+
+func (f *filterFlag) String() string {
+	if f == nil || len(*f) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(*f))
+	for _, filter := range *f {
+		parts = append(parts, fmt.Sprintf("%s=%s", filter.Field, filter.Value))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (f *filterFlag) Set(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("filter must be in the form field=value")
+	}
+	parts := strings.SplitN(value, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("filter must be in the form field=value")
+	}
+	field := strings.TrimSpace(parts[0])
+	val := strings.TrimSpace(parts[1])
+	if field == "" {
+		return fmt.Errorf("filter field must not be empty")
+	}
+	*f = append(*f, search.Filter{Field: field, Value: val})
+	return nil
 }
