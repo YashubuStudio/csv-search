@@ -63,13 +63,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context must not be nil")
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/search", s.handleSearch)
-	mux.HandleFunc("/healthz", s.handleHealth)
-
+	handler := s.Handler()
 	srv := &http.Server{
 		Addr:    s.cfg.Addr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	log.Printf("csv-search server listening on %s (dataset=%s, topK=%d)\n", s.cfg.Addr, s.cfg.Dataset, s.cfg.DefaultTopK)
@@ -103,6 +100,15 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		return err
 	}
+}
+
+// Handler builds a new http.Handler exposing the search and health endpoints.
+// Callers can mount the handler on an existing mux when embedding the service.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search", s.handleSearch)
+	mux.HandleFunc("/healthz", s.handleHealth)
+	return mux
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
