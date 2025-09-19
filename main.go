@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"yashubustudio/csv-search/emb"
+	"yashubustudio/csv-search/internal/config"
 	"yashubustudio/csv-search/internal/database"
 	"yashubustudio/csv-search/internal/ingest"
 	"yashubustudio/csv-search/internal/search"
@@ -49,112 +50,196 @@ func main() {
 
 func runInit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	dbPath := fs.String("db", "data/app.db", "path to SQLite database")
+	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	dbPath := fs.String("db", "", "path to SQLite database")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	db, err := database.Open(*dbPath)
+	appCfg, err := loadConfig(*configFlag, flagWasProvided(fs, "config"))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+
+	db := firstNonEmpty(*dbPath, configDatabasePath(appCfg), "data/app.db")
+	if db == "" {
+		return fmt.Errorf("db path is required")
+	}
+
+	dbHandle, err := database.Open(db)
+	if err != nil {
+		return err
+	}
+	defer dbHandle.Close()
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	if err := database.Init(ctx, db); err != nil {
+	if err := database.Init(ctx, dbHandle); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "database initialized at %s\n", *dbPath)
+	fmt.Fprintf(os.Stdout, "database initialized at %s\n", db)
 	return nil
 }
 
 func runIngest(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
-	dbPath := fs.String("db", "data/app.db", "path to SQLite database")
+	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	dbPath := fs.String("db", "", "path to SQLite database")
 	csvPath := fs.String("csv", "", "path to source CSV file")
-	batchSize := fs.Int("batch", 1000, "rows per transaction batch")
+	batchSize := fs.Int("batch", -1, "rows per transaction batch")
 	ortLib := fs.String("ort-lib", "", "path to ONNX Runtime shared library")
 	modelPath := fs.String("model", "", "path to encoder ONNX model")
 	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
-	maxSeqLen := fs.Int("max-seq-len", 512, "maximum sequence length for the encoder")
+	maxSeqLen := fs.Int("max-seq-len", -1, "maximum sequence length for the encoder")
 
-	tableName := fs.String("table", "default", "logical table/dataset name to store the records")
-	idCol := fs.String("id-col", "id", "CSV column containing the primary identifier")
+	tableName := fs.String("table", "", "logical table/dataset name to store the records")
+	idCol := fs.String("id-col", "", "CSV column containing the primary identifier")
 	textColsFlag := fs.String("text-cols", "", "comma-separated CSV columns used for embeddings (defaults to metadata columns)")
-	metaColsFlag := fs.String("meta-cols", "*", "comma-separated CSV columns to persist as metadata; use '*' to keep all")
+	metaColsFlag := fs.String("meta-cols", "", "comma-separated CSV columns to persist as metadata; use '*' to keep all")
 	latCol := fs.String("lat-col", "", "CSV column for latitude (empty to disable)")
 	lngCol := fs.String("lng-col", "", "CSV column for longitude (empty to disable)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *csvPath == "" {
-		return fmt.Errorf("csv path is required")
-	}
-	if *ortLib == "" {
-		return fmt.Errorf("ort-lib is required")
-	}
-	if *modelPath == "" {
-		return fmt.Errorf("model is required")
-	}
-	if *tokenizerPath == "" {
-		return fmt.Errorf("tokenizer is required")
-	}
 
-	db, err := database.Open(*dbPath)
+	appCfg, err := loadConfig(*configFlag, flagWasProvided(fs, "config"))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 
-	if err := database.Init(ctx, db); err != nil {
+	datasetName := strings.TrimSpace(*tableName)
+	if datasetName == "" && appCfg != nil && appCfg.DefaultDataset != "" {
+		datasetName = appCfg.DefaultDataset
+	}
+
+	var dataset config.DatasetConfig
+	hasDataset := false
+	if appCfg != nil && datasetName != "" {
+		if ds, ok := appCfg.Dataset(datasetName); ok {
+			dataset = ds
+			hasDataset = true
+		}
+	}
+
+	table := firstNonEmpty(*tableName, dataset.Table, datasetName, "default")
+
+	csv := *csvPath
+	if csv == "" && hasDataset {
+		csv = dataset.CSV
+	}
+	if appCfg != nil {
+		csv = appCfg.ResolvePath(csv)
+	}
+	if csv == "" {
+		return fmt.Errorf("csv path is required")
+	}
+
+	db := firstNonEmpty(*dbPath, configDatabasePath(appCfg), "data/app.db")
+	if db == "" {
+		return fmt.Errorf("db path is required")
+	}
+
+	batch := firstPositive(*batchSize, dataset.BatchSize, 1000)
+	identifier := firstNonEmpty(*idCol, dataset.IDColumn, "id")
+
+	textCols := parseCSVList(*textColsFlag)
+	if len(textCols) == 0 && hasDataset && len(dataset.TextColumns) > 0 {
+		textCols = cloneStrings(dataset.TextColumns)
+	}
+
+	metaCols := parseCSVList(*metaColsFlag)
+	if len(metaCols) == 0 {
+		if hasDataset && len(dataset.MetaColumns) > 0 {
+			metaCols = cloneStrings(dataset.MetaColumns)
+		} else {
+			metaCols = []string{"*"}
+		}
+	}
+
+	latitude := firstNonEmpty(*latCol, dataset.LatColumn)
+	longitude := firstNonEmpty(*lngCol, dataset.LngColumn)
+
+	ortDLL := *ortLib
+	if ortDLL == "" && appCfg != nil {
+		ortDLL = appCfg.ResolvePath(appCfg.Embedding.OrtLib)
+	}
+	if ortDLL == "" {
+		return fmt.Errorf("ort-lib is required")
+	}
+
+	model := *modelPath
+	if model == "" && appCfg != nil {
+		model = appCfg.ResolvePath(appCfg.Embedding.Model)
+	}
+	if model == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	tokenizer := *tokenizerPath
+	if tokenizer == "" && appCfg != nil {
+		tokenizer = appCfg.ResolvePath(appCfg.Embedding.Tokenizer)
+	}
+	if tokenizer == "" {
+		return fmt.Errorf("tokenizer is required")
+	}
+
+	seqLen := firstPositive(*maxSeqLen, cfgEmbeddingMaxSeqLen(appCfg), 512)
+
+	dbHandle, err := database.Open(db)
+	if err != nil {
+		return err
+	}
+	defer dbHandle.Close()
+
+	if err := database.Init(ctx, dbHandle); err != nil {
 		return err
 	}
 
 	enc := &emb.Encoder{}
-	cfg := emb.Config{
-		OrtDLL:        *ortLib,
-		ModelPath:     *modelPath,
-		TokenizerPath: *tokenizerPath,
-		MaxSeqLen:     *maxSeqLen,
+	encoderCfg := emb.Config{
+		OrtDLL:        ortDLL,
+		ModelPath:     model,
+		TokenizerPath: tokenizer,
+		MaxSeqLen:     seqLen,
 	}
-	if err := enc.Init(cfg); err != nil {
+	if err := enc.Init(encoderCfg); err != nil {
 		return err
 	}
 	defer enc.Close()
 
 	options := ingest.Options{
-		CSVPath:   *csvPath,
-		BatchSize: *batchSize,
-		Dataset:   *tableName,
+		CSVPath:   csv,
+		BatchSize: batch,
+		Dataset:   table,
 		Columns: ingest.ColumnConfig{
-			ID:       *idCol,
-			Text:     parseCSVList(*textColsFlag),
-			Metadata: parseCSVList(*metaColsFlag),
-			Lat:      *latCol,
-			Lng:      *lngCol,
+			ID:       identifier,
+			Text:     textCols,
+			Metadata: metaCols,
+			Lat:      latitude,
+			Lng:      longitude,
 		},
 	}
 
-	if err := ingest.Run(ctx, db, enc, options); err != nil {
+	if err := ingest.Run(ctx, dbHandle, enc, options); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "ingested data from %s\n", *csvPath)
+	fmt.Fprintf(os.Stdout, "ingested data from %s\n", csv)
 	return nil
 }
 
 func runSearch(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
-	dbPath := fs.String("db", "data/app.db", "path to SQLite database")
+	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	dbPath := fs.String("db", "", "path to SQLite database")
 	query := fs.String("query", "", "text query for semantic vector search")
-	topK := fs.Int("topk", 10, "number of results to return")
+	topK := fs.Int("topk", -1, "number of results to return")
 	ortLib := fs.String("ort-lib", "", "path to ONNX Runtime shared library")
 	modelPath := fs.String("model", "", "path to encoder ONNX model")
 	tokenizerPath := fs.String("tokenizer", "", "path to tokenizer.json")
-	maxSeqLen := fs.Int("max-seq-len", 512, "maximum sequence length for the encoder")
-	tableName := fs.String("table", "default", "logical table/dataset to search")
+	maxSeqLen := fs.Int("max-seq-len", -1, "maximum sequence length for the encoder")
+	tableName := fs.String("table", "", "logical table/dataset to search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -162,30 +247,71 @@ func runSearch(ctx context.Context, args []string) error {
 	if *query == "" {
 		return fmt.Errorf("query is required")
 	}
-	if *ortLib == "" {
-		return fmt.Errorf("ort-lib is required")
-	}
-	if *modelPath == "" {
-		return fmt.Errorf("model is required")
-	}
-	if *tokenizerPath == "" {
-		return fmt.Errorf("tokenizer is required")
-	}
 
-	db, err := database.Open(*dbPath)
+	appCfg, err := loadConfig(*configFlag, flagWasProvided(fs, "config"))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+
+	datasetName := strings.TrimSpace(*tableName)
+	if datasetName == "" && appCfg != nil && appCfg.DefaultDataset != "" {
+		datasetName = appCfg.DefaultDataset
+	}
+
+	var dataset config.DatasetConfig
+	if appCfg != nil && datasetName != "" {
+		if ds, ok := appCfg.Dataset(datasetName); ok {
+			dataset = ds
+		}
+	}
+
+	table := firstNonEmpty(*tableName, dataset.Table, datasetName, "default")
+	db := firstNonEmpty(*dbPath, configDatabasePath(appCfg), "data/app.db")
+	if db == "" {
+		return fmt.Errorf("db path is required")
+	}
+
+	ortDLL := *ortLib
+	if ortDLL == "" && appCfg != nil {
+		ortDLL = appCfg.ResolvePath(appCfg.Embedding.OrtLib)
+	}
+	if ortDLL == "" {
+		return fmt.Errorf("ort-lib is required")
+	}
+
+	model := *modelPath
+	if model == "" && appCfg != nil {
+		model = appCfg.ResolvePath(appCfg.Embedding.Model)
+	}
+	if model == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	tokenizer := *tokenizerPath
+	if tokenizer == "" && appCfg != nil {
+		tokenizer = appCfg.ResolvePath(appCfg.Embedding.Tokenizer)
+	}
+	if tokenizer == "" {
+		return fmt.Errorf("tokenizer is required")
+	}
+
+	seqLen := firstPositive(*maxSeqLen, cfgEmbeddingMaxSeqLen(appCfg), 512)
+	limit := firstPositive(*topK, cfgSearchTopK(appCfg), 10)
+
+	dbHandle, err := database.Open(db)
+	if err != nil {
+		return err
+	}
+	defer dbHandle.Close()
 
 	enc := &emb.Encoder{}
-	cfg := emb.Config{
-		OrtDLL:        *ortLib,
-		ModelPath:     *modelPath,
-		TokenizerPath: *tokenizerPath,
-		MaxSeqLen:     *maxSeqLen,
+	encoderCfg := emb.Config{
+		OrtDLL:        ortDLL,
+		ModelPath:     model,
+		TokenizerPath: tokenizer,
+		MaxSeqLen:     seqLen,
 	}
-	if err := enc.Init(cfg); err != nil {
+	if err := enc.Init(encoderCfg); err != nil {
 		return err
 	}
 	defer enc.Close()
@@ -193,7 +319,7 @@ func runSearch(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	results, err := search.VectorSearch(ctx, db, enc, *tableName, *query, *topK)
+	results, err := search.VectorSearch(ctx, dbHandle, enc, table, *query, limit)
 	if err != nil {
 		return err
 	}
@@ -227,4 +353,77 @@ Commands:
 
 Use "%s <command> -h" to see command-specific options.
 `, exe, exe)
+}
+
+func loadConfig(path string, required bool) (*config.Config, error) {
+	normalized := strings.TrimSpace(path)
+	if normalized == "" {
+		normalized = "config.json"
+	}
+	cfg, err := config.Load(normalized)
+	if err != nil {
+		if os.IsNotExist(err) && !required {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func flagWasProvided(fs *flag.FlagSet, name string) bool {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			provided = true
+		}
+	})
+	return provided
+}
+
+func configDatabasePath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.ResolvePath(cfg.Database.Path)
+}
+
+func cfgEmbeddingMaxSeqLen(cfg *config.Config) int {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Embedding.MaxSeqLen
+}
+
+func cfgSearchTopK(cfg *config.Config) int {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Search.DefaultTopK
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func cloneStrings(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]string, len(src))
+	copy(out, src)
+	return out
 }

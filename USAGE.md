@@ -1,10 +1,10 @@
 # USAGE
 
-本手順はリポジトリ同梱の`/csv/image.csv`を取り込み、列「実行内容」を意味検索の対象に設定したうえで、必要に応じて列「得意先名」でアナログな絞り込みを行い、列「受付No」を含む行単位の検索結果を得るまでの流れを説明します。【F:csv/image.csv†L1-L16】【F:main.go†L73-L203】
+本手順はリポジトリ同梱の`/csv/image.csv`を取り込み、列「実行内容」を意味検索の対象に設定したうえで、必要に応じて列「得意先名」でアナログな絞り込みを行い、列「受付No」を含む行単位の検索結果を得るまでの流れを説明します。【F:csv/image.csv†L1-L16】【F:main.go†L85-L229】【F:main.go†L232-L329】
 
 ## 1. ビルドと前提ファイルの準備
 
-1. Go 1.24 以降と、ONNX Runtime の共有ライブラリ・エンコーダーモデル・トークナイザファイルを利用できる環境を用意します。リポジトリには Windows 向けの `onnixruntime-win/lib/onnxruntime.dll`、推奨モデル `models/bge-m3/model.onnx`・`model.onnx_data`、および `tokenizer.json` が同梱されているため、まずはこれらのパスを利用する想定で進めます。【F:main.go†L73-L203】【F:emb/emb.go†L24-L37】【F:onnxruntimetest.go†L14-L23】
+1. Go 1.24 以降と、ONNX Runtime の共有ライブラリ・エンコーダーモデル・トークナイザファイルを利用できる環境を用意します。リポジトリには Windows 向けの `onnixruntime-win/lib/onnxruntime.dll`、推奨モデル `models/bge-m3/model.onnx`・`model.onnx_data`、および `tokenizer.json` が同梱されているため、まずはこれらのパスを利用する想定で進めます。【F:config.json†L2-L24】【F:emb/emb.go†L24-L123】【F:onnxruntimetest.go†L14-L23】
 2. リポジトリのルートで次のコマンドを実行し、CLI バイナリ `csv-search` を生成します。
 
    ```bash
@@ -12,78 +12,65 @@
    ```
 
 3. 実行時には以下のファイルを同じディレクトリか任意のパスに配置しておきます。
-   - `csv-search`（ビルド済みバイナリ）【F:main.go†L19-L47】
-   - ONNX Runtime 共有ライブラリ `onnixruntime-win/lib/onnxruntime.dll`（`--ort-lib` で指定）【F:main.go†L73-L173】【F:emb/emb.go†L24-L123】
-   - エンコーダーモデル `models/bge-m3/model.onnx`（`model.onnx_data` も同階層に置く）【F:main.go†L73-L203】【F:emb/emb.go†L24-L123】
-   - トークナイザ設定 `models/bge-m3/tokenizer.json`【F:main.go†L73-L203】【F:emb/emb.go†L24-L123】
-   - 取り込み対象の CSV ファイル `/csv/image.csv`【F:csv/image.csv†L1-L16】
+   - `csv-search`（ビルド済みバイナリ）【F:main.go†L20-L49】
+   - ONNX Runtime 共有ライブラリ `onnixruntime-win/lib/onnxruntime.dll`（`config.json` の `embedding.ort_lib` で参照）【F:config.json†L5-L9】【F:main.go†L164-L170】【F:main.go†L274-L280】
+   - エンコーダーモデル `models/bge-m3/model.onnx` と `model.onnx_data`【F:config.json†L5-L9】【F:main.go†L172-L178】【F:main.go†L282-L288】
+   - トークナイザ設定 `models/bge-m3/tokenizer.json`【F:config.json†L5-L9】【F:main.go†L180-L186】【F:main.go†L290-L296】
+   - 取り込み対象の CSV ファイル `/csv/image.csv`【F:config.json†L13-L20】【F:csv/image.csv†L1-L16】
 
-## 2. データベースの初期化
+## 2. `config.json` の確認とカスタマイズ
 
-検索結果を保存する SQLite データベースを作成します。以下の例では `data/image.db` を利用しています。
+リポジトリ直下に用意した `config.json` は、データベースの保存先や ONNX 関連ファイル、取り込み対象 CSV、デフォルトの検索トップ件数などをまとめて管理します。【F:config.json†L1-L24】 CLI コマンドは起動時にこのファイルを自動的に読み込み（存在しない場合は従来のフラグのみで動作）し、指定がないフラグ値を設定値で補います。【F:main.go†L51-L329】【F:internal/config/config.go†L12-L92】
 
-```bash
-./csv-search init --db ./data/image.db
-```
+主要な設定項目は次の通りです。
 
-コマンドはデータベースを作成し、レコード本体・ベクトル・全文検索・位置情報テーブルなど検索に必要なスキーマを初期化します。【F:main.go†L49-L145】【F:internal/database/schema.go†L10-L38】
+- `database.path`: SQLite ファイルの出力先。【F:config.json†L2-L4】【F:main.go†L64-L142】【F:main.go†L268-L271】
+- `embedding` ブロック: ONNX Runtime DLL、エンコーダーモデル、トークナイザ、最大トークン長の既定値。【F:config.json†L5-L9】【F:main.go†L164-L188】【F:main.go†L274-L313】
+- `default_dataset`: `ingest` / `search` コマンドが参照する既定データセット名。【F:config.json†L11-L24】【F:main.go†L112-L268】
+- `datasets.<name>`: CSV パス、ID 列、埋め込み対象列、保持するメタデータ列、バッチサイズなどの取り込み設定。【F:config.json†L13-L20】【F:main.go†L117-L160】
+- `search.default_topk`: 検索の既定件数。【F:config.json†L22-L24】【F:main.go†L298-L323】
 
-## 3. `/csv/image.csv` の取り込み
+複数のデータセットを扱う場合は `datasets` に別名を追加し、`default_dataset` を切り替えるか、コマンド実行時に `--table` で明示的に指定してください。【F:config.json†L11-L24】【F:main.go†L112-L161】【F:main.go†L232-L329】
 
-列「受付No」を ID、「実行内容」を埋め込み対象に設定し、行全体（列「受付No」「得意先名」「実行内容」）をメタデータとして保持するために、次のように `ingest` コマンドを実行します。【F:csv/image.csv†L1-L16】【F:main.go†L73-L145】
+## 3. 初期化と CSV 取り込み
 
-```bash
-./csv-search ingest \
-  --db ./data/image.db \
-  --csv ./csv/image.csv \
-  --ort-lib ./onnixruntime-win/lib/onnxruntime.dll \
-  --model ./models/bge-m3/model.onnx \
-  --tokenizer ./models/bge-m3/tokenizer.json \
-  --table textile_jobs \
-  --id-col 受付No \
-  --text-cols "実行内容" \
-  --meta-cols "*"
-```
-
-- `--id-col 受付No` で受付番号を主キーに設定し、検索結果で必ず参照できるようにします。【F:csv/image.csv†L1-L16】【F:main.go†L83-L138】
-- `--text-cols "実行内容"` により、埋め込み生成の対象列を「実行内容」だけに絞ります。【F:main.go†L73-L145】
-- `--meta-cols "*"` を指定すると CSV の全列が JSON メタデータに残るため、後段で「得意先名」による絞り込みや「受付No」を含む行出力が可能になります。【F:main.go†L83-L138】【F:internal/ingest/ingest.go†L224-L353】
-
-処理が完了すると `ingested data from ./csv/image.csv` が出力され、行ごとのベクトル・メタデータが `data/image.db` に保存されます。【F:main.go†L141-L145】
-
-## 4. 検索と出力
-
-`search` コマンドで「実行内容」を対象に意味検索を行います。`--table` には取り込み時に指定した論理テーブル名（上記例では `textile_jobs`）を指定します。【F:main.go†L148-L203】
+設定済みの `config.json` が存在する場合、最小限のコマンドで初期化と取り込みが実行できます。
 
 ```bash
-./csv-search search \
-  --db ./data/image.db \
-  --query "漂白" \
-  --topk 5 \
-  --ort-lib ./onnixruntime-win/lib/onnxruntime.dll \
-  --model ./models/bge-m3/model.onnx \
-  --tokenizer ./models/bge-m3/tokenizer.json \
-  --table textile_jobs
+./csv-search init
+./csv-search ingest
 ```
 
-結果は JSON 配列で標準出力に返され、各要素の `fields` に「受付No」「得意先名」「実行内容」が含まれます。これにより行単位で内容を確認でき、`id` としても「受付No」が保持されます。【F:main.go†L148-L203】【F:internal/search/vector.go†L15-L114】
+`init` は `database.path` に SQLite ファイルを作成し、スキーマを初期化します。【F:config.json†L2-L4】【F:main.go†L51-L83】【F:internal/database/schema.go†L10-L38】 `ingest` は `datasets.<name>` の設定を基に CSV を読み込み、必要な列から埋め込みを生成してレコード群を保存します。【F:config.json†L13-L20】【F:main.go†L85-L229】【F:internal/ingest/ingest.go†L22-L353】
+
+`config.json` 以外を使いたい場合は、`--config ./path/to/custom.json` を各コマンドに付与してください。個別のフラグ (`--db` や `--csv` など) を併用すると、その値が設定ファイルより優先されます。【F:main.go†L53-L229】
+
+## 4. 検索と結果の活用
+
+設定ファイルで `search.default_topk` と `default_dataset` を指定しているため、検索はクエリのみで実行できます。
+
+```bash
+./csv-search search --query "漂白"
+```
+
+コマンドはクエリをエンコードし、保存済みベクトルとのコサイン類似度でランキングした JSON 配列を標準出力へ返します。結果には `fields` に「受付No」「得意先名」「実行内容」が含まれ、`id` としても「受付No」が保持されます。【F:main.go†L232-L329】【F:internal/search/vector.go†L25-L115】 `--topk`、`--table`、`--db` などを指定すると、設定ファイルの値を上書きできます。【F:main.go†L232-L329】
 
 ### 任意のアナログ絞り込み（得意先名）
 
 検索結果は標準出力に出るため、CLI の外側で `jq` や `grep` などを用いたアナログ絞り込みが可能です。例えば「得意先名」に「艶栄工業㈱」を含む行だけを抽出するには次のようにします。
 
 ```bash
-./csv-search search ... | jq "map(select(.fields[\"得意先名\"] | contains(\"艶栄工業㈱\")))"
+./csv-search search --query "漂白" | jq "map(select(.fields[\"得意先名\"] | contains(\"艶栄工業㈱\")))"
 ```
 
-この操作により、意味検索で抽出した候補から任意の得意先名に該当する行のみを確認できます。【F:csv/image.csv†L1-L16】【F:internal/search/vector.go†L15-L114】
+この操作により、意味検索で抽出した候補から任意の得意先名に該当する行のみを確認できます。【F:csv/image.csv†L1-L16】【F:internal/search/vector.go†L25-L115】
 
 ### 受付No を含む行出力の確認
 
-`--meta-cols "*"` を指定しているため、上記の検索結果・絞り込み結果のいずれでも `fields["受付No"]` に受付番号が含まれます。必要に応じて次のように整形し、行ごとの主要情報を表示できます。
+`config.json` の `meta_columns` を `"*"` にしているため、検索結果の `fields` に元の CSV 列がすべて残ります。必要に応じて次のように整形し、行ごとの主要情報を表示できます。
 
 ```bash
-./csv-search search ... | jq -r ".[] | \"受付No: \(.fields[\"受付No\"]) / 得意先名: \(.fields[\"得意先名\"]) / 実行内容: \(.fields[\"実行内容\"])\""
+./csv-search search --query "漂白" | jq -r ".[] | \"受付No: \(.fields[\"受付No\"]) / 得意先名: \(.fields[\"得意先名\"]) / 実行内容: \(.fields[\"実行内容\"])\""
 ```
 
-これにより、「受付No」「得意先名」「実行内容」を同一行で確認しながら検索結果を活用できます。【F:csv/image.csv†L1-L16】【F:internal/search/vector.go†L15-L114】
+これにより、「受付No」「得意先名」「実行内容」を同一行で確認しながら検索結果を活用できます。【F:config.json†L13-L20】【F:csv/image.csv†L1-L16】【F:internal/search/vector.go†L25-L115】
