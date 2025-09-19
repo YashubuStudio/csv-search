@@ -1,0 +1,1 @@
+ - Creation and use of packages etc. must comply with CreateRule.md, and anything not specified is free to use.
