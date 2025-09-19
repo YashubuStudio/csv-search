@@ -1,0 +1,25 @@
+{
+  "database": {
+    "path": "./data/image.db"
+  },
+  "embedding": {
+    "ort_lib": "./onnixruntime-win/lib/onnxruntime.dll",
+    "model": "./models/bge-m3/model.onnx",
+    "tokenizer": "./models/bge-m3/tokenizer.json",
+    "max_seq_len": 512
+  },
+  "default_dataset": "textile_jobs",
+  "datasets": {
+    "textile_jobs": {
+      "table": "textile_jobs",
+      "csv": "./csv/image.csv",
+      "batch_size": 1000,
+      "id_column": "受付No",
+      "text_columns": ["実行内容"],
+      "meta_columns": ["*"]
+    }
+  },
+  "search": {
+    "default_topk": 5
+  }
+}
