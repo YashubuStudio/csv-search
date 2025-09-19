@@ -22,11 +22,18 @@ type Result struct {
 	Lng     *float64          `json:"lng,omitempty"`
 }
 
+// Filter represents a metadata equality condition applied to search results.
+type Filter struct {
+	Field string
+	Value string
+}
+
 // VectorSearch encodes the query with enc and ranks records stored in the
 // database by cosine similarity. The dataset parameter selects which logical
 // table to search. The topK parameter controls how many results are returned
-// (defaults to 10 when non-positive).
-func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, dataset, query string, topK int) ([]Result, error) {
+// (defaults to 10 when non-positive). When filters are provided they must all
+// match the metadata fields on a record for it to be included in the results.
+func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, dataset, query string, topK int, filters []Filter) ([]Result, error) {
 	if enc == nil {
 		return nil, fmt.Errorf("encoder is nil")
 	}
@@ -79,6 +86,10 @@ func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, dataset, qu
 			return nil, fmt.Errorf("decode metadata for %s: %w", r.ID, err)
 		}
 
+		if !matchesFilters(r.Fields, filters) {
+			continue
+		}
+
 		vec, err := vector.Deserialize(blob)
 		if err != nil {
 			return nil, err
@@ -112,4 +123,28 @@ func VectorSearch(ctx context.Context, db *sql.DB, enc *emb.Encoder, dataset, qu
 		results = results[:topK]
 	}
 	return results, nil
+}
+
+func matchesFilters(fields map[string]string, filters []Filter) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	if len(fields) == 0 {
+		return false
+	}
+	for _, f := range filters {
+		field := strings.TrimSpace(f.Field)
+		value := f.Value
+		if field == "" {
+			continue
+		}
+		v, ok := fields[field]
+		if !ok {
+			return false
+		}
+		if v != value {
+			return false
+		}
+	}
+	return true
 }
