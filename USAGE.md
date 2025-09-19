@@ -4,7 +4,7 @@
 
 ## 1. ビルドと前提ファイルの準備
 
-1. Go 1.24 以降と、ONNX Runtime の共有ライブラリ・エンコーダーモデル・トークナイザファイルを利用できる環境を用意します。これらは埋め込みの生成と検索時に必須です。【F:main.go†L73-L203】
+1. Go 1.24 以降と、ONNX Runtime の共有ライブラリ・エンコーダーモデル・トークナイザファイルを利用できる環境を用意します。リポジトリには Windows 向けの `onnixruntime-win/lib/onnxruntime.dll`、推奨モデル `models/bge-m3/model.onnx`・`model.onnx_data`、および `tokenizer.json` が同梱されているため、まずはこれらのパスを利用する想定で進めます。【F:main.go†L73-L203】【F:emb/emb.go†L24-L37】【F:onnxruntimetest.go†L14-L23】
 2. リポジトリのルートで次のコマンドを実行し、CLI バイナリ `csv-search` を生成します。
 
    ```bash
@@ -13,9 +13,9 @@
 
 3. 実行時には以下のファイルを同じディレクトリか任意のパスに配置しておきます。
    - `csv-search`（ビルド済みバイナリ）【F:main.go†L19-L47】
-   - ONNX Runtime 共有ライブラリ（`--ort-lib` で指定）【F:main.go†L73-L173】【F:emb/emb.go†L39-L123】
-   - エンコーダーモデル（`--model` で指定）【F:main.go†L73-L203】【F:emb/emb.go†L45-L123】
-   - トークナイザ設定（`--tokenizer` で指定）【F:main.go†L73-L203】【F:emb/emb.go†L45-L123】
+   - ONNX Runtime 共有ライブラリ `onnixruntime-win/lib/onnxruntime.dll`（`--ort-lib` で指定）【F:main.go†L73-L173】【F:emb/emb.go†L24-L123】
+   - エンコーダーモデル `models/bge-m3/model.onnx`（`model.onnx_data` も同階層に置く）【F:main.go†L73-L203】【F:emb/emb.go†L24-L123】
+   - トークナイザ設定 `models/bge-m3/tokenizer.json`【F:main.go†L73-L203】【F:emb/emb.go†L24-L123】
    - 取り込み対象の CSV ファイル `/csv/image.csv`【F:csv/image.csv†L1-L16】
 
 ## 2. データベースの初期化
@@ -36,9 +36,9 @@
 ./csv-search ingest \
   --db ./data/image.db \
   --csv ./csv/image.csv \
-  --ort-lib /path/to/libonnxruntime.so \
-  --model /path/to/encoder.onnx \
-  --tokenizer /path/to/tokenizer.json \
+  --ort-lib ./onnixruntime-win/lib/onnxruntime.dll \
+  --model ./models/bge-m3/model.onnx \
+  --tokenizer ./models/bge-m3/tokenizer.json \
   --table textile_jobs \
   --id-col 受付No \
   --text-cols "実行内容" \
@@ -60,9 +60,9 @@
   --db ./data/image.db \
   --query "漂白" \
   --topk 5 \
-  --ort-lib /path/to/libonnxruntime.so \
-  --model /path/to/encoder.onnx \
-  --tokenizer /path/to/tokenizer.json \
+  --ort-lib ./onnixruntime-win/lib/onnxruntime.dll \
+  --model ./models/bge-m3/model.onnx \
+  --tokenizer ./models/bge-m3/tokenizer.json \
   --table textile_jobs
 ```
 
