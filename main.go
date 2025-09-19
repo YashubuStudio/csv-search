@@ -263,9 +263,11 @@ func runServe(ctx context.Context, args []string) error {
 	}
 
 	var dataset config.DatasetConfig
+	hasDataset := false
 	if appCfg != nil && datasetName != "" {
 		if ds, ok := appCfg.Dataset(datasetName); ok {
 			dataset = ds
+			hasDataset = true
 		}
 	}
 
@@ -330,6 +332,18 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 	defer enc.Close()
+
+	if hasDataset {
+		ingestOpts, err := ingestOptionsFromDataset(appCfg, table, dataset)
+		if err != nil {
+			return err
+		}
+		if ingestOpts != nil {
+			if err := ingest.Run(ctx, dbHandle, enc, *ingestOpts); err != nil {
+				return err
+			}
+		}
+	}
 
 	srvCfg := server.Config{
 		Addr:            *addr,
@@ -449,6 +463,38 @@ func runSearch(ctx context.Context, args []string) error {
 	encJSON := json.NewEncoder(os.Stdout)
 	encJSON.SetIndent("", "  ")
 	return encJSON.Encode(results)
+}
+
+func ingestOptionsFromDataset(cfg *config.Config, table string, dataset config.DatasetConfig) (*ingest.Options, error) {
+	csvPath := strings.TrimSpace(dataset.CSV)
+	if cfg != nil {
+		csvPath = cfg.ResolvePath(csvPath)
+	}
+	if csvPath == "" {
+		return nil, nil
+	}
+
+	metaCols := cloneStrings(dataset.MetaColumns)
+	if len(metaCols) == 0 {
+		metaCols = []string{"*"}
+	}
+
+	textCols := cloneStrings(dataset.TextColumns)
+
+	opts := &ingest.Options{
+		CSVPath:   csvPath,
+		BatchSize: firstPositive(dataset.BatchSize, 1000),
+		Dataset:   firstNonEmpty(dataset.Table, table, "default"),
+		Columns: ingest.ColumnConfig{
+			ID:       firstNonEmpty(dataset.IDColumn, "id"),
+			Text:     textCols,
+			Metadata: metaCols,
+			Lat:      strings.TrimSpace(dataset.LatColumn),
+			Lng:      strings.TrimSpace(dataset.LngColumn),
+		},
+	}
+
+	return opts, nil
 }
 
 func parseCSVList(value string) []string {
