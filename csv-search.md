@@ -1,46 +1,142 @@
-# csv-search Application Overview
+# csv-search Intelligent Execution Guide
 
-## 概要
-csv-search は CSV データを取り込み、ONNX Runtime を用いて文書ベクトルを生成し、SQLite に保存された埋め込みを使ってセマンティック検索を提供するアプリケーションです。CLI ツールとして単体で利用できるほか、`pkg/csvsearch` パッケージを経由して別の Go アプリケーションへ統合できます。
+## Purpose
+- Provide a single, AI-friendly brief that contains **every** prerequisite to run and extend the csv-search application.
+- Assume no other documentation is available: follow the steps below to build the CLI, ingest data, run semantic search, expose the HTTP API, or embed the library inside another Go program.
 
-## 主な機能
-- **データベース初期化**: SQLite スキーマの作成・更新。CLI の `init` サブコマンドおよび `Service.InitDatabase` で実施。
-- **CSV 取り込み**: CSV 行を読み込み、ONNX エンコーダーでテキストをベクトル化してデータベースへアップサート。`ingest` サブコマンドまたは `Service.Ingest` で利用可能。
-- **セマンティック検索**: クエリをベクトル化してコサイン類似度でランキング。`search` サブコマンドおよび `Service.Search` が提供し、結果は JSON 配列として取得できます。
-- **HTTP API サーバー**: REST エンドポイント (`/search`, `/healthz`) を提供。CLI の `serve` サブコマンドか `Service.StartServer` / `Service.NewAPIServer` で起動・統合可能。`internal/server.Server.Handler` により既存の HTTP サーバーへマウントすることもできます。
+## Repository Snapshot
+| Path | Role |
+|------|------|
+| `main.go` | CLI entry point exposing `init`, `ingest`, `search`, and `serve` subcommands. |
+| `pkg/csvsearch/` | Public Go package with `Service` utilities (`InitDatabase`, `Ingest`, `Search`, `StartServer`, `NewAPIServer`). |
+| `internal/config/` | JSON configuration loader and helpers that resolve relative paths. |
+| `internal/database/` | SQLite opener and schema bootstrap (`records`, `records_vec`, `records_fts`, `records_rtree`). |
+| `internal/ingest/` | CSV parser, embedding pipeline, differential upsert logic. |
+| `internal/search/` | Vector search implementation using cosine similarity and metadata filters. |
+| `internal/server/` | HTTP server exposing `/search` and `/healthz`. |
+| `internal/vector/` | Helpers for vector serialization and cosine scoring. |
+| `emb/` | ONNX encoder wrapper (`emb.Encoder`). **Do not modify** unless you are updating ONNX handling. |
+| `csv/`, `models/`, `onnixruntime-win/` | Sample CSV dataset, encoder assets, and Windows ONNX Runtime binary shipped with the repo. |
 
-## 必要なもの
-- **SQLite ドライバー**: `modernc.org/sqlite` を使用しており、CGO なしでビルド可能です。
-- **ONNX Runtime DLL/共有ライブラリ**: `emb.Encoder` の `OrtDLL` へパスを指定する必要があります。Windows 向け `.dll` などを想定しています。
-- **エンコーダーモデル/トークナイザー**: ONNX モデル (`model.onnx`) と `tokenizer.json` を `EncoderConfig` または設定ファイルから指定。
-- **設定ファイル (任意)**: `config.json` 形式でデータベースパス、エンコーディング資産、デフォルトデータセット、検索設定を定義できます。
-- **CSV データ**: 取り込み対象。デフォルトでは `id` 列とテキスト列（`text-cols` or `meta-cols`）が必要です。
+## Runtime Prerequisites & Assets
+1. **Go toolchain**: Go 1.24 or newer (module path: `yashubustudio/csv-search`).
+2. **SQLite driver**: Included via `modernc.org/sqlite`; no CGO required.
+3. **ONNX Runtime shared library**: Point `embedding.ort_lib` (or `--ort-lib`) to a `.dll/.so/.dylib`. The repo bundles `./onnixruntime-win/lib/onnxruntime.dll` for Windows builds.
+4. **Encoder model + tokenizer**: e.g., `./models/bge-m3/model.onnx`, optional `model.onnx_data`, and `./models/bge-m3/tokenizer.json`.
+5. **Configuration** (default `config.json`) describing the database, encoder, and dataset metadata.
+6. **CSV source data**: e.g., `./csv/image.csv` with at least an ID column plus one text column.
 
-## 入出力
-- **取り込み (`Ingest`) 入力**
-  - `IngestOptions` で CSV パス、ID 列、テキスト列、メタデータ列、緯度経度列などを指定。省略時は設定ファイルのデータセット定義が自動適用されます。
-  - 出力として `IngestSummary` を返し、使用されたパラメータを参照できます。
-- **検索 (`Search`) 入力/出力**
-  - `SearchOptions` はクエリ文字列、対象データセット、TopK、フィルター（`Filter` 構造体）を受け取ります。
-  - 戻り値は `Result` のスライスで、ID・スコア・メタデータ・位置情報を含む JSON 互換構造です。
-- **HTTP API**
-  - `/search`: GET/POST 共通。`q`/`query`、`dataset`/`table`、`topk`、`filter=field=value` をサポート。
-  - `/healthz`: サーバーヘルスチェック用。常に `200 OK` を返します。
+> 📦 Keep the binary, ONNX runtime, model, tokenizer, configuration, and CSV file in reachable paths. The configuration loader resolves relative paths against the config file’s directory.
 
-## Go 統合ポイント
-- **Service 構築**: `NewService(ServiceOptions)` で設定・DB・エンコーダー（遅延初期化）を一括管理。外部から提供された DB/エンコーダーを再利用できます。
-- **データベースパス取得**: `Service.DatabasePath()` で実際に使用している SQLite ファイルのパスを取得可能（外部接続時は空文字）。
-- **HTTP 統合**: `APIServer.Handler()` を既存ルーターに登録、または `APIServer.Serve(ctx)` で単独起動。
-- **Graceful Shutdown**: `StartServer` は `context.Context` を介して OS シグナルなどに対応し、自動でデータセットを取り込みます（設定に CSV パスがある場合）。
+## Configuration Contract (`config.json`)
+```json
+{
+  "database": { "path": "./data/image.db" },
+  "embedding": {
+    "ort_lib": "./onnixruntime-win/lib/onnxruntime.dll",
+    "model": "./models/bge-m3/model.onnx",
+    "tokenizer": "./models/bge-m3/tokenizer.json",
+    "max_seq_len": 512
+  },
+  "default_dataset": "textile_jobs",
+  "datasets": {
+    "textile_jobs": {
+      "table": "textile_jobs",
+      "csv": "./csv/image.csv",
+      "batch_size": 1000,
+      "id_column": "受付No",
+      "text_columns": ["実行内容"],
+      "meta_columns": ["*"],
+      "lat_column": "",
+      "lng_column": ""
+    }
+  },
+  "search": { "default_topk": 5 }
+}
+```
+- `database.path`: SQLite file path (defaults to `data/app.db` when omitted).
+- `embedding`: Shared library, ONNX model, tokenizer, and maximum sequence length used by `emb.Encoder`.
+- `default_dataset`: Dataset name automatically used by CLI/API when `--table`/`dataset` is omitted.
+- `datasets.<name>`: Defaults for ingestion (CSV path, identifier column, text columns to embed, metadata to store, optional lat/lng columns, batch size).
+- `search.default_topk`: Fallback result size for `search` and API calls.
 
-## CLI サブコマンド概要
-| コマンド | 主なオプション | 概要 |
-|----------|----------------|------|
-| `init`   | `--config`, `--db` | SQLite スキーマ初期化。デフォルトは `config.json` と `data/app.db`。 |
-| `ingest` | `--csv`, `--table`, `--text-cols`, `--meta-cols`, `--lat-col`, `--lng-col`, `--ort-lib`, `--model`, `--tokenizer`, `--max-seq-len` | CSV を読み込みベクトル化し保存。終了後に取り込み概要を出力。 |
-| `search` | `--query`, `--table`, `--topk`, `--filter`, エンコーダー関連オプション | クエリを検索し、JSON 形式で結果を標準出力。 |
-| `serve`  | `--addr`, `--table`, `--topk`, `--request-timeout`, `--shutdown-timeout`, エンコーダー関連オプション | HTTP API サーバーを起動。Ctrl+C などでグレースフル終了。 |
+## End-to-End Workflow
+1. **Build the CLI**
+   ```bash
+   go build -o csv-search .
+   ```
+2. **Initialize the database schema**
+   ```bash
+   ./csv-search init --config ./config.json
+   ```
+   - Creates directories as needed and applies the schema (`records`, `records_vec`, `records_fts`, `records_rtree`).
+3. **Ingest CSV data and generate embeddings**
+   ```bash
+   ./csv-search ingest --config ./config.json
+   ```
+   - Reads `datasets.<default_dataset>` if flags such as `--csv`, `--id-col`, etc. are omitted.
+   - Generates embeddings through ONNX, stores metadata JSON, populates FTS and R-Tree tables, and de-duplicates rows using a hash of ID + content + metadata.
+4. **Run a semantic search from the CLI**
+   ```bash
+   ./csv-search search --config ./config.json --query "Wi-Fi カフェ" --topk 10
+   ```
+   - Outputs JSON array with `dataset`, `id`, `fields` (metadata map), `score`, and optional `lat`/`lng`.
+   - Add `--filter "列名=値"` repeatedly for AND filters; `--table` overrides the dataset.
+5. **Expose an HTTP API**
+   ```bash
+   ./csv-search serve --config ./config.json --addr :8080
+   ```
+   - Auto-ingests configured datasets before serving (unless `ServeOptions.AutoIngest` is set to `false` via the Go API).
+   - Gracefully shuts down on SIGINT/SIGTERM respecting `--shutdown-timeout`.
 
-## ビルドに関する注意
-- Windows 向け `.exe` ビルドを想定する場合、`GOOS=windows` とし、`EncoderConfig` の `OrtLibrary` に ONNX Runtime の DLL を指定してください。`modernc.org/sqlite` を採用しているため、CGO 無効のままクロスビルドが可能です。
-- ONNX ランタイム DLL、モデルファイル、トークナイザーをアプリと同じディレクトリに配置するか、設定ファイルで絶対パス/相対パスを指定してください。
+## CLI Reference
+| Command | Key Flags | Behaviour |
+|---------|-----------|-----------|
+| `init` | `--config`, `--db` | Loads configuration (if present) and initializes SQLite schema. |
+| `ingest` | `--config`, `--db`, `--csv`, `--table`, `--id-col`, `--text-cols`, `--meta-cols`, `--lat-col`, `--lng-col`, `--ort-lib`, `--model`, `--tokenizer`, `--max-seq-len`, `--batch` | Imports CSV, generates embeddings, updates `records`, `records_vec`, `records_fts`, and `records_rtree`. |
+| `search` | `--config`, `--db`, `--query`, `--table`, `--topk`, `--filter`, encoder flags | Encodes the query via ONNX and prints ranked JSON results. |
+| `serve` | `--config`, `--db`, `--addr`, `--table`, `--topk`, `--request-timeout`, `--shutdown-timeout`, encoder flags | Starts HTTP server with `/search` and `/healthz`. |
+
+> All encoder-related flags override configuration values. Provide `--ort-lib`, `--model`, and `--tokenizer` when the config file does not exist.
+
+## HTTP API Contract
+- **`GET /search`**: Query parameters `q`/`query`, `dataset`/`table`, `topk`, and repeated `filter=field=value`.
+- **`POST /search`**: JSON body `{"query": "text", "dataset": "name", "topk": 5, "filters": {"列": "値"}}`. Arrays under `filter` are also accepted.
+- **`GET /healthz`**: Returns `200 OK` with body `ok`.
+- Responses mirror CLI search results. Timeout defaults to 30 s; exceeding it returns HTTP 504.
+
+## Embedding the Library in Go Code
+```go
+svc, err := csvsearch.NewService(csvsearch.ServiceOptions{
+    Config:   csvsearch.ConfigReference{Path: "./config.json"},
+    Database: csvsearch.DatabaseOptions{Path: ""},
+    Encoder:  csvsearch.EncoderOptions{Config: csvsearch.EncoderConfig{}},
+})
+if err != nil { panic(err) }
+defer svc.Close()
+
+ctx := context.Background()
+if err := svc.InitDatabase(ctx, csvsearch.InitDatabaseOptions{}); err != nil { panic(err) }
+if _, err := svc.Ingest(ctx, csvsearch.IngestOptions{}); err != nil { panic(err) }
+results, err := svc.Search(ctx, csvsearch.SearchOptions{Query: "Wi-Fi カフェ"})
+if err != nil { panic(err) }
+_ = results
+```
+- `DatabaseOptions.Handle` lets you supply an existing `*sql.DB`.
+- `EncoderOptions.Instance` accepts a pre-initialized `*emb.Encoder`; otherwise the encoder is lazily built from config.
+- `Service.StartServer` wraps auto-ingest plus HTTP serving; use `Service.NewAPIServer` to mount the handler on a custom mux.
+
+## Data Pipeline Details
+- **CSV Parsing**: Header row is mandatory. `MetadataColumns` accepts `"*"` to store all columns; duplicates are deduplicated automatically.
+- **Lat/Lng Handling**: Optional numeric columns populate `records.lat`/`records.lng` and the `records_rtree` spatial index.
+- **Change Detection**: Each row produces a SHA-256 hash of dataset, ID, text content, metadata, and coordinates to skip unchanged rows on re-ingest.
+- **Vector Storage**: Embeddings are serialized as little-endian float32 blobs in `records_vec`. Empty texts remove the vector entry but keep metadata.
+- **Full-Text Search**: Text columns populate `records_fts`, enabling hybrid search strategies if required.
+
+## Troubleshooting Checklist
+- `encoder configuration is incomplete`: ensure `OrtDLL`, `ModelPath`, and `TokenizerPath` are reachable (absolute or relative to config file).
+- `filter must be in the form field=value`: sanitize `--filter` arguments or JSON payloads.
+- `id column is empty`: verify the CSV has unique IDs defined in `id_column`.
+- Cross-compiling for Windows: set `GOOS=windows` and keep the ONNX Runtime DLL alongside the executable or update config paths accordingly.
+
+With this guide alone, an automated agent can build the binary, ingest data, run semantic queries, launch the HTTP API, or link against the Go package without consulting additional files.
