@@ -10,7 +10,7 @@ import (
 func loadConfig(path string, required bool) (*config.Config, error) {
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
-		normalized = "config.json"
+		normalized = "csv-search_config.json"
 	}
 	cfg, err := config.Load(normalized)
 	if err != nil {

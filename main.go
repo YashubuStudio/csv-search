@@ -51,7 +51,7 @@ func main() {
 
 func runInit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	configFlag := fs.String("config", "", "path to configuration file (default: csv-search_config.json if present)")
 	dbPath := fs.String("db", "", "path to SQLite database")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -80,7 +80,7 @@ func runInit(ctx context.Context, args []string) error {
 
 func runIngest(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
-	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	configFlag := fs.String("config", "", "path to configuration file (default: csv-search_config.json if present)")
 	dbPath := fs.String("db", "", "path to SQLite database")
 	csvPath := fs.String("csv", "", "path to source CSV file")
 	batchSize := fs.Int("batch", -1, "rows per transaction batch")
@@ -147,7 +147,7 @@ func runIngest(ctx context.Context, args []string) error {
 
 func runSearch(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
-	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	configFlag := fs.String("config", "", "path to configuration file (default: csv-search_config.json if present)")
 	dbPath := fs.String("db", "", "path to SQLite database")
 	query := fs.String("query", "", "text query for semantic vector search")
 	topK := fs.Int("topk", -1, "number of results to return")
@@ -203,7 +203,7 @@ func runSearch(ctx context.Context, args []string) error {
 
 func runServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	configFlag := fs.String("config", "", "path to configuration file (default: config.json if present)")
+	configFlag := fs.String("config", "", "path to configuration file (default: csv-search_config.json if present)")
 	dbPath := fs.String("db", "", "path to SQLite database")
 	addr := fs.String("addr", ":8080", "address for the HTTP server (host:port)")
 	tableName := fs.String("table", "", "default dataset to search")
