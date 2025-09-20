@@ -13,14 +13,14 @@
 
 3. 実行時には以下のファイルを同じディレクトリか任意のパスに配置しておきます。
    - `csv-search`（ビルド済みバイナリ）
-   - ONNX Runtime 共有ライブラリ `onnixruntime-win/lib/onnxruntime.dll`（`config.json` の `embedding.ort_lib` で参照）
+   - ONNX Runtime 共有ライブラリ `onnixruntime-win/lib/onnxruntime.dll`（`csv-search_config.json` の `embedding.ort_lib` で参照）
    - エンコーダーモデル `models/bge-m3/model.onnx` と `model.onnx_data`
    - トークナイザ設定 `models/bge-m3/tokenizer.json`
    - 取り込み対象の CSV ファイル `/csv/image.csv`
 
-## 2. `config.json` の確認とカスタマイズ
+## 2. `csv-search_config.json` の確認とカスタマイズ
 
-リポジトリ直下に用意した `config.json` は、データベースの保存先や ONNX 関連ファイル、取り込み対象 CSV、デフォルトの検索トップ件数などをまとめて管理します。 CLI コマンドは起動時にこのファイルを自動的に読み込み（存在しない場合は従来のフラグのみで動作）し、指定がないフラグ値を設定値で補います。
+リポジトリ直下に用意した `csv-search_config.json` は、データベースの保存先や ONNX 関連ファイル、取り込み対象 CSV、デフォルトの検索トップ件数などをまとめて管理します。 CLI コマンドは起動時にこのファイルを自動的に読み込み（存在しない場合は従来のフラグのみで動作）し、指定がないフラグ値を設定値で補います。
 
 主要な設定項目は次の通りです。
 
@@ -34,7 +34,7 @@
 
 ## 3. 初期化と CSV 取り込み
 
-設定済みの `config.json` が存在する場合、最小限のコマンドで初期化と取り込みが実行できます。
+設定済みの `csv-search_config.json` が存在する場合、最小限のコマンドで初期化と取り込みが実行できます。
 
 ```bash
 ./csv-search init
@@ -43,7 +43,7 @@
 
 `init` は `database.path` に SQLite ファイルを作成し、スキーマを初期化します。 `ingest` は `datasets.<name>` の設定を基に CSV を読み込み、必要な列から埋め込みを生成してレコード群を保存します。
 
-`config.json` 以外を使いたい場合は、`--config ./path/to/custom.json` を各コマンドに付与してください。個別のフラグ (`--db` や `--csv` など) を併用すると、その値が設定ファイルより優先されます。
+`csv-search_config.json` 以外を使いたい場合は、`--config ./path/to/custom.json` を各コマンドに付与してください。個別のフラグ (`--db` や `--csv` など) を併用すると、その値が設定ファイルより優先されます。
 
 ## 4. 検索と結果の活用
 
@@ -67,7 +67,7 @@
 
 ### 受付No を含む行出力の確認
 
-`config.json` の `meta_columns` を `"*"` にしているため、検索結果の `fields` に元の CSV 列がすべて残ります。必要に応じて次のように整形し、行ごとの主要情報を表示できます。
+`csv-search_config.json` の `meta_columns` を `"*"` にしているため、検索結果の `fields` に元の CSV 列がすべて残ります。必要に応じて次のように整形し、行ごとの主要情報を表示できます。
 
 ```bash
 ./csv-search search --query "漂白" | jq -r ".[] | \"受付No: \(.fields[\"受付No\"]) / 得意先名: \(.fields[\"得意先名\"]) / 実行内容: \(.fields[\"実行内容\"])\""

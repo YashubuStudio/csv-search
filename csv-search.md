@@ -23,12 +23,12 @@
 2. **SQLite driver**: Included via `modernc.org/sqlite`; no CGO required.
 3. **ONNX Runtime shared library**: Point `embedding.ort_lib` (or `--ort-lib`) to a `.dll/.so/.dylib`. The repo bundles `./onnixruntime-win/lib/onnxruntime.dll` for Windows builds.
 4. **Encoder model + tokenizer**: e.g., `./models/bge-m3/model.onnx`, optional `model.onnx_data`, and `./models/bge-m3/tokenizer.json`.
-5. **Configuration** (default `config.json`) describing the database, encoder, and dataset metadata.
+5. **Configuration** (default `csv-search_config.json`) describing the database, encoder, and dataset metadata.
 6. **CSV source data**: e.g., `./csv/image.csv` with at least an ID column plus one text column.
 
 > 📦 Keep the binary, ONNX runtime, model, tokenizer, configuration, and CSV file in reachable paths. The configuration loader resolves relative paths against the config file’s directory.
 
-## Configuration Contract (`config.json`)
+## Configuration Contract (`csv-search_config.json`)
 ```json
 {
   "database": { "path": "./data/image.db" },
@@ -67,24 +67,24 @@
    ```
 2. **Initialize the database schema**
    ```bash
-   ./csv-search init --config ./config.json
+   ./csv-search init --config ./csv-search_config.json
    ```
    - Creates directories as needed and applies the schema (`records`, `records_vec`, `records_fts`, `records_rtree`).
 3. **Ingest CSV data and generate embeddings**
    ```bash
-   ./csv-search ingest --config ./config.json
+   ./csv-search ingest --config ./csv-search_config.json
    ```
    - Reads `datasets.<default_dataset>` if flags such as `--csv`, `--id-col`, etc. are omitted.
    - Generates embeddings through ONNX, stores metadata JSON, populates FTS and R-Tree tables, and de-duplicates rows using a hash of ID + content + metadata.
 4. **Run a semantic search from the CLI**
    ```bash
-   ./csv-search search --config ./config.json --query "Wi-Fi カフェ" --topk 10
+   ./csv-search search --config ./csv-search_config.json --query "Wi-Fi カフェ" --topk 10
    ```
    - Outputs JSON array with `dataset`, `id`, `fields` (metadata map), `score`, and optional `lat`/`lng`.
    - Add `--filter "列名=値"` repeatedly for AND filters; `--table` overrides the dataset.
 5. **Expose an HTTP API**
    ```bash
-   ./csv-search serve --config ./config.json --addr :8080
+   ./csv-search serve --config ./csv-search_config.json --addr :8080
    ```
    - Auto-ingests configured datasets before serving (unless `ServeOptions.AutoIngest` is set to `false` via the Go API).
    - Gracefully shuts down on SIGINT/SIGTERM respecting `--shutdown-timeout`.
@@ -108,7 +108,7 @@
 ## Embedding the Library in Go Code
 ```go
 svc, err := csvsearch.NewService(csvsearch.ServiceOptions{
-    Config:   csvsearch.ConfigReference{Path: "./config.json"},
+    Config:   csvsearch.ConfigReference{Path: "./csv-search_config.json"},
     Database: csvsearch.DatabaseOptions{Path: ""},
     Encoder:  csvsearch.EncoderOptions{Config: csvsearch.EncoderConfig{}},
 })
