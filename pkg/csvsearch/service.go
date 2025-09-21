@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	"yashubustudio/csv-search/emb"
 	"yashubustudio/csv-search/internal/config"
@@ -56,6 +57,9 @@ type Service struct {
 	encoder      *emb.Encoder
 	closeEncoder bool
 	encoderCfg   EncoderConfig
+
+	dbReadyMu sync.RWMutex
+	dbReady   bool
 }
 
 // NewService loads the optional JSON configuration file, opens the database (if
@@ -101,6 +105,7 @@ func (s *Service) Close() error {
 		}
 		s.db = nil
 		s.dbPath = ""
+		s.setDatabaseReady(false)
 	}
 	return firstErr
 }
@@ -191,4 +196,23 @@ func (s *Service) ensureEncoder() (*emb.Encoder, error) {
 	s.encoder = enc
 	s.closeEncoder = true
 	return enc, nil
+}
+
+func (s *Service) setDatabaseReady(ready bool) {
+	if s == nil {
+		return
+	}
+	s.dbReadyMu.Lock()
+	s.dbReady = ready
+	s.dbReadyMu.Unlock()
+}
+
+func (s *Service) databaseReady() bool {
+	if s == nil {
+		return false
+	}
+	s.dbReadyMu.RLock()
+	ready := s.dbReady
+	s.dbReadyMu.RUnlock()
+	return ready
 }

@@ -78,7 +78,7 @@ func (s *Service) Ingest(ctx context.Context, opts IngestOptions) (IngestSummary
 	latitude := firstNonEmpty(strings.TrimSpace(opts.LatitudeColumn), dataset.LatColumn)
 	longitude := firstNonEmpty(strings.TrimSpace(opts.LongitudeColumn), dataset.LngColumn)
 
-	if err := s.InitDatabase(ctx, InitDatabaseOptions{}); err != nil {
+	if err := s.ensureDatabase(ctx); err != nil {
 		return IngestSummary{}, err
 	}
 

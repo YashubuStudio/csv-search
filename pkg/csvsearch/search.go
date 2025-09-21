@@ -48,6 +48,10 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]Result, err
 		return nil, fmt.Errorf("query is required")
 	}
 
+	if err := s.ensureDatabase(ctx); err != nil {
+		return nil, err
+	}
+
 	datasetName, dataset, _ := resolveDataset(s.cfg, opts.Dataset)
 	table := resolveTable(datasetName, dataset, opts.Table)
 	limit := firstPositive(opts.TopK, cfgSearchTopK(s.cfg), 10)

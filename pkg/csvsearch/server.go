@@ -52,6 +52,10 @@ func (s *Service) NewAPIServer(opts ServeOptions) (*APIServer, error) {
 		return nil, fmt.Errorf("database handle is nil")
 	}
 
+	if err := s.ensureDatabase(context.Background()); err != nil {
+		return nil, err
+	}
+
 	datasetName, datasetCfg, _ := resolveDataset(s.cfg, opts.Dataset)
 	table := resolveTable(datasetName, datasetCfg, opts.Table)
 	defaultTopK := firstPositive(opts.TopK, cfgSearchTopK(s.cfg), 10)
@@ -94,7 +98,7 @@ func (s *Service) StartServer(ctx context.Context, opts ServeOptions) error {
 		return fmt.Errorf("context must not be nil")
 	}
 
-	if err := s.InitDatabase(ctx, InitDatabaseOptions{}); err != nil {
+	if err := s.ensureDatabase(ctx); err != nil {
 		return err
 	}
 
