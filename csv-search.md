@@ -102,6 +102,7 @@
 ## HTTP API Contract
 - **`GET /search`**: Query parameters `q`/`query`, `dataset`/`table`, `topk`, and repeated `filter=field=value`.
 - **`POST /search`**: JSON body `{"query": "text", "dataset": "name", "topk": 5, "filters": {"列": "値"}}`. Arrays under `filter` are also accepted.
+- **`POST /query`**: Alias of `/search` that also accepts `max_results` instead of `topk` and tolerates an optional `summary_only` flag for compatibility with external tools.
 - **`GET /healthz`**: Returns `200 OK` with body `ok`.
 - Responses mirror CLI search results. Timeout defaults to 30 s; exceeding it returns HTTP 504.
 

@@ -70,6 +70,7 @@ Go 1.24以降とONNX Runtime（共有ライブラリ）、推奨エンコーダ�
 
 - `GET /search` — クエリ文字列 `q`（または `query`）、`topk`、`table`/`dataset`、`filter=列名=値` を指定して検索します。
 - `POST /search` — JSON で `{"query": "Wi-Fi カフェ", "dataset": "images", "topk": 5, "filters": {"得意先名": "艶栄工業㈱"}}` のように送信できます。
+- `POST /query` — `/search` と同じ検索を行うエイリアスです。JSON では `max_results` を `topk` の代わりに利用でき、`summary_only` フラグを指定してもエラーになりません。
 - `GET /healthz` — ヘルスチェック用の軽量エンドポイントです。
 
 `filter` パラメータは CLI と同じく `フィールド=値` 形式を複数指定でき、JSON の `filters` マップと合わせて内部で AND 条件として処理されます。 レスポンスは CLI の `search` と同様に検索結果配列の JSON を返すため、既存のパイプラインにそのまま組み込めます。
