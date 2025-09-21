@@ -107,6 +107,7 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search", s.handleSearch)
+	mux.HandleFunc("/query", s.handleSearch)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	return mux
 }
@@ -117,10 +118,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchRequest struct {
-	Query   string
-	Dataset string
-	TopK    int
-	Filters []search.Filter
+	Query       string
+	Dataset     string
+	TopK        int
+	Filters     []search.Filter
+	SummaryOnly bool
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -187,30 +189,76 @@ func (s *Server) decodeSearchRequest(r *http.Request) (searchRequest, error) {
 			}
 			topK = v
 		}
+		if topK <= 0 {
+			if rawMax := strings.TrimSpace(values.Get("max_results")); rawMax != "" {
+				v, err := strconv.Atoi(rawMax)
+				if err != nil {
+					return searchRequest{}, fmt.Errorf("invalid max_results value %q", rawMax)
+				}
+				topK = v
+			} else if rawMax := strings.TrimSpace(values.Get("maxResults")); rawMax != "" {
+				v, err := strconv.Atoi(rawMax)
+				if err != nil {
+					return searchRequest{}, fmt.Errorf("invalid maxResults value %q", rawMax)
+				}
+				topK = v
+			}
+		}
 		filters, err := parseFilterValues(values["filter"])
 		if err != nil {
 			return searchRequest{}, err
 		}
-		return searchRequest{Query: query, Dataset: dataset, TopK: topK, Filters: filters}, nil
+		summaryOnly := false
+		if rawSummary := strings.TrimSpace(values.Get("summary_only")); rawSummary != "" {
+			v, err := strconv.ParseBool(rawSummary)
+			if err != nil {
+				return searchRequest{}, fmt.Errorf("invalid summary_only value %q", rawSummary)
+			}
+			summaryOnly = v
+		} else if rawSummary := strings.TrimSpace(values.Get("summaryOnly")); rawSummary != "" {
+			v, err := strconv.ParseBool(rawSummary)
+			if err != nil {
+				return searchRequest{}, fmt.Errorf("invalid summaryOnly value %q", rawSummary)
+			}
+			summaryOnly = v
+		}
+		return searchRequest{Query: query, Dataset: dataset, TopK: topK, Filters: filters, SummaryOnly: summaryOnly}, nil
 	}
 
 	var payload struct {
-		Query   string            `json:"query"`
-		Dataset string            `json:"dataset"`
-		TopK    int               `json:"topk"`
-		Filters map[string]string `json:"filters"`
-		Filter  []string          `json:"filter"`
+		Query          string            `json:"query"`
+		Dataset        string            `json:"dataset"`
+		Table          string            `json:"table"`
+		TopK           int               `json:"topk"`
+		MaxResults     int               `json:"max_results"`
+		MaxResultsAlt  int               `json:"maxResults"`
+		SummaryOnly    bool              `json:"summary_only"`
+		SummaryOnlyAlt bool              `json:"summaryOnly"`
+		Filters        map[string]string `json:"filters"`
+		Filter         []string          `json:"filter"`
 	}
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
 		return searchRequest{}, fmt.Errorf("decode request: %w", err)
 	}
 
+	dataset := strings.TrimSpace(payload.Dataset)
+	if dataset == "" {
+		dataset = strings.TrimSpace(payload.Table)
+	}
+	topK := payload.TopK
+	if topK <= 0 {
+		if payload.MaxResults > 0 {
+			topK = payload.MaxResults
+		} else if payload.MaxResultsAlt > 0 {
+			topK = payload.MaxResultsAlt
+		}
+	}
 	req := searchRequest{
-		Query:   strings.TrimSpace(payload.Query),
-		Dataset: strings.TrimSpace(payload.Dataset),
-		TopK:    payload.TopK,
+		Query:       strings.TrimSpace(payload.Query),
+		Dataset:     dataset,
+		TopK:        topK,
+		SummaryOnly: payload.SummaryOnly || payload.SummaryOnlyAlt,
 	}
 	if len(payload.Filters) > 0 {
 		req.Filters = make([]search.Filter, 0, len(payload.Filters))
