@@ -31,5 +31,19 @@ func (s *Service) InitDatabase(ctx context.Context, opts InitDatabaseOptions) er
 	initCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	return database.Init(initCtx, s.db)
+	if err := database.Init(initCtx, s.db); err != nil {
+		return err
+	}
+	s.setDatabaseReady(true)
+	return nil
+}
+
+func (s *Service) ensureDatabase(ctx context.Context) error {
+	if s.databaseReady() {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return s.InitDatabase(ctx, InitDatabaseOptions{})
 }
